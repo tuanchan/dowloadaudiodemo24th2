@@ -18,7 +18,9 @@ class DownloadProgressCard extends StatelessWidget {
     final isAudio = type == DownloadType.audio;
     final color = isAudio ? const Color(0xFF1DB954) : const Color(0xFFFF0000);
     final icon = isAudio ? Icons.music_note : Icons.videocam;
-    final percent = (progress * 100).toInt();
+
+    // ✅ show 1 decimal so <1% still visible
+    final percentText = (progress * 100).clamp(0, 100).toStringAsFixed(1);
 
     return Card(
       child: Padding(
@@ -27,7 +29,6 @@ class DownloadProgressCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                // Animated icon container
                 Container(
                   width: 44,
                   height: 44,
@@ -51,15 +52,15 @@ class DownloadProgressCard extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      Text(
+                      const Text(
                         'Vui lòng đợi, không tắt ứng dụng...',
-                        style: const TextStyle(color: Color(0xFF666666), fontSize: 12),
+                        style: TextStyle(color: Color(0xFF666666), fontSize: 12),
                       ),
                     ],
                   ),
                 ),
                 Text(
-                  '$percent%',
+                  '$percentText%',
                   style: TextStyle(
                     color: color,
                     fontWeight: FontWeight.bold,
@@ -69,31 +70,26 @@ class DownloadProgressCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-
-            // Progress bar
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
-                value: progress,
+                value: progress.clamp(0.0, 1.0),
                 backgroundColor: const Color(0xFF333333),
                 valueColor: AlwaysStoppedAnimation<Color>(color),
                 minHeight: 6,
               ),
             ),
-
-            if (progress > 0) ...[
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerRight,
-                child: Text(
-                  progress < 1.0 ? 'Đang tải... $percent%' : 'Hoàn tất!',
-                  style: TextStyle(
-                    color: color.withOpacity(0.8),
-                    fontSize: 12,
-                  ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                progress < 1.0 ? 'Đang tải... $percentText%' : 'Hoàn tất!',
+                style: TextStyle(
+                  color: color.withOpacity(0.8),
+                  fontSize: 12,
                 ),
               ),
-            ],
+            ),
           ],
         ),
       ),
