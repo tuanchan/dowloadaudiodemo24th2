@@ -128,11 +128,11 @@ class _HomeScreenState extends State<HomeScreen>
 
     try {
       final path = await _service.downloadVideo(
-        videoInfo: _videoInfo!,
-        stream: stream,
-        sourceUrl: sourceUrl,
-        onProgress: (p) => setState(() => _downloadProgress = p),
-      );
+  videoInfo: _videoInfo!,
+  stream: stream,
+  
+  onProgress: (p) => setState(() => _downloadProgress = p),
+);
 
       setState(() {
         _isDownloading = false;

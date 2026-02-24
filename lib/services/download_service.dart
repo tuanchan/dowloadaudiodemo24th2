@@ -241,6 +241,7 @@ class DownloadService {
   Future<String> downloadVideo({
     required VideoInfo videoInfo,
     required VideoStream stream,
+    required String sourceUrl,
     required Function(double progress) onProgress,
   }) async {
     final dir = await _getDownloadDirectory();
@@ -253,7 +254,7 @@ class DownloadService {
     final task = DownloadTask(
       id: DateTime.now().millisecondsSinceEpoch.toString(),
       title: videoInfo.title,
-      url: videoInfo.id,
+      url: sourceUrl,
       type: DownloadType.video,
       quality: stream.quality,
     );
