@@ -1,0 +1,159 @@
+name: 🍎 Build iOS IPA (Unsigned)
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: 'Build number (leave empty for auto)'
+        required: false
+        default: ''
+
+env:
+  FLUTTER_VERSION: '3.19.0'
+  XCODE_VERSION: '15.2'
+
+jobs:
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      # ─── Checkout ───────────────────────────────────────────────
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      # ─── Setup Flutter ──────────────────────────────────────────
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      # ─── Setup Xcode ────────────────────────────────────────────
+      - name: 🛠️ Select Xcode Version
+        run: |
+          sudo xcode-select -switch /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
+          xcodebuild -version
+
+      # ─── Cache CocoaPods ────────────────────────────────────────
+      - name: 📦 Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: ios/Pods
+          key: ${{ runner.os }}-pods-${{ hashFiles('**/Podfile.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pods-
+
+      # ─── Flutter Dependencies ───────────────────────────────────
+      - name: 📦 Install Flutter Dependencies
+        run: |
+          flutter --version
+          flutter pub get
+
+      # ─── iOS Dependencies ───────────────────────────────────────
+      - name: 📦 Install iOS Dependencies (CocoaPods)
+        working-directory: ios
+        run: |
+          pod install --repo-update
+
+      # ─── Increment Build Number ─────────────────────────────────
+      - name: 🔢 Set Build Number
+        run: |
+          BUILD_NUM="${{ github.event.inputs.build_number }}"
+          if [ -z "$BUILD_NUM" ]; then
+            BUILD_NUM="${{ github.run_number }}"
+          fi
+          echo "BUILD_NUMBER=$BUILD_NUM" >> $GITHUB_ENV
+          echo "Using build number: $BUILD_NUM"
+
+      # ─── Build iOS (No Code Sign) ───────────────────────────────
+      - name: 🏗️ Build iOS App (No Code Signing)
+        run: |
+          flutter build ios \
+            --release \
+            --no-codesign \
+            --build-number=${{ env.BUILD_NUMBER }}
+
+      # ─── Create Payload & IPA ───────────────────────────────────
+      - name: 📦 Package as IPA
+        run: |
+          # Create directory structure
+          mkdir -p Payload
+          
+          # Copy .app bundle
+          APP_PATH=$(find build/ios/iphoneos -name "*.app" | head -1)
+          echo "Found app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
+          
+          # Create IPA (IPA = zip with Payload folder)
+          zip -r YTDownloader.ipa Payload/
+          
+          # Verify
+          ls -lh YTDownloader.ipa
+          echo "✅ IPA created successfully!"
+
+      # ─── Upload IPA Artifact ────────────────────────────────────
+      - name: ☁️ Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTDownloader-iOS-${{ env.BUILD_NUMBER }}
+          path: YTDownloader.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      # ─── Create Release (on tag) ────────────────────────────────
+      - name: 🚀 Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: YTDownloader.ipa
+          name: YT Downloader ${{ github.ref_name }}
+          body: |
+            ## 📱 YT Downloader ${{ github.ref_name }}
+            
+            ### Cài đặt (Sideload - không cần jailbreak):
+            
+            #### 🔧 Dùng Sideloadly:
+            1. Tải [Sideloadly](https://sideloadly.io/) về máy tính
+            2. Kết nối iPhone/iPad qua USB
+            3. Kéo file `YTDownloader.ipa` vào Sideloadly
+            4. Nhập Apple ID (dùng tài khoản phụ)
+            5. Nhấn **Start** và chờ cài đặt
+            6. Vào **Settings > General > VPN & Device Management** và **Trust** developer
+            
+            #### 📲 Dùng eSign (không cần máy tính):
+            1. Cài eSign từ: `esign.yyyue.xyz`
+            2. Tải file IPA về trong eSign
+            3. Import certificate vào eSign
+            4. Ký và cài đặt
+            
+            > ⚠️ App có hiệu lực **7 ngày** với tài khoản Apple ID miễn phí.
+            > Dùng Apple Developer Account ($99/năm) để có hiệu lực **1 năm**.
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─── Build Summary ───────────────────────────────────────────────
+  notify:
+    name: 📊 Build Summary
+    needs: build-ios
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print Summary
+        run: |
+          if [ "${{ needs.build-ios.result }}" == "success" ]; then
+            echo "✅ iOS build SUCCEEDED!"
+            echo "📦 IPA artifact available for download in GitHub Actions"
+          else
+            echo "❌ iOS build FAILED!"
+            exit 1
+          fi

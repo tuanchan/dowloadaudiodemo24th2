@@ -1,0 +1,56 @@
+name: 🤖 Build Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout
+        uses: actions/checkout@v4
+
+      - name: 🐦 Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 📦 Get Dependencies
+        run: flutter pub get
+
+      - name: 🔢 Set Build Number
+        run: echo "BUILD_NUMBER=${{ github.run_number }}" >> $GITHUB_ENV
+
+      - name: 🏗️ Build APK (Release)
+        run: |
+          flutter build apk \
+            --release \
+            --build-number=${{ env.BUILD_NUMBER }}
+
+      - name: ☁️ Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTDownloader-Android-${{ env.BUILD_NUMBER }}
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
+
+      - name: 🚀 Release on Tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: build/app/outputs/flutter-apk/app-release.apk
+          name: YT Downloader ${{ github.ref_name }}
+          body: |
+            ## 🤖 Android APK
+            Cài đặt bằng cách mở file APK trên thiết bị Android.
+            Cho phép cài đặt từ nguồn không xác định trong Settings nếu cần.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

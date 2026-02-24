@@ -1,0 +1,47 @@
+name: ytdlp_downloader
+description: YouTube Audio & Video Downloader using yt-dlp
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # YouTube extraction (pure Dart - works on iOS without binary)
+  youtube_explode_dart: ^2.2.0
+  
+  # HTTP requests
+  http: ^1.2.0
+  dio: ^5.4.0
+  
+  # File management
+  path_provider: ^2.1.2
+  permission_handler: ^11.3.0
+  open_file: ^3.3.2
+  
+  # UI helpers
+  fluttertoast: ^8.2.4
+  flutter_spinkit: ^5.2.1
+  percent_indicator: ^4.2.3
+  
+  # Share / open files
+  share_plus: ^7.2.2
+  
+  # Icons
+  cupertino_icons: ^1.0.6
+  
+  # URL validator
+  validators: ^3.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/
