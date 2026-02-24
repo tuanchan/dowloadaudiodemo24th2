@@ -37,6 +37,8 @@ class VideoStream {
   final int? bitrate;
   final String url;
   final int? fileSize;
+  final int itag;          // dùng để re-fetch URL mới khi download
+  final bool isMuxed;      // true = có cả video+audio
 
   const VideoStream({
     required this.quality,
@@ -44,6 +46,8 @@ class VideoStream {
     this.bitrate,
     required this.url,
     this.fileSize,
+    required this.itag,
+    this.isMuxed = false,
   });
 
   String get label {
@@ -64,6 +68,7 @@ class AudioStream {
   final int? bitrate;
   final String url;
   final int? fileSize;
+  final int itag;          // dùng để re-fetch URL mới khi download
 
   const AudioStream({
     required this.quality,
@@ -71,6 +76,7 @@ class AudioStream {
     this.bitrate,
     required this.url,
     this.fileSize,
+    required this.itag,
   });
 
   String get label {
