@@ -16,7 +16,7 @@ on:
 
 env:
   FLUTTER_VERSION: '3.19.0'
-  XCODE_VERSION: '15.2'   # sẽ được setup-xcode chọn đúng
+  XCODE_VERSION: '16.2'   # sẽ được setup-xcode chọn đúng
 
 jobs:
   build-ios:
