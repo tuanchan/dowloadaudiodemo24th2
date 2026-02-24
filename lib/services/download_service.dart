@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
@@ -9,41 +8,15 @@ import '../models/download_model.dart';
 class DownloadService {
   static final DownloadService _instance = DownloadService._internal();
   factory DownloadService() => _instance;
-  DownloadService._internal() {
-    _setupDio();
-  }
+  DownloadService._internal();
 
   final YoutubeExplode _yt = YoutubeExplode();
-  late final Dio _dio;
   final List<DownloadTask> _downloadHistory = [];
   final StreamController<List<DownloadTask>> _historyController =
       StreamController<List<DownloadTask>>.broadcast();
 
   List<DownloadTask> get downloadHistory => List.unmodifiable(_downloadHistory);
   Stream<List<DownloadTask>> get historyStream => _historyController.stream;
-
-  // ─── Headers YouTube CDN chấp nhận ───────────────────────────────────────
-  static const Map<String, String> _ytHeaders = {
-    'User-Agent':
-        'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) '
-        'AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
-    'Referer': 'https://www.youtube.com/',
-    'Origin': 'https://www.youtube.com',
-    'Accept': '*/*',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept-Encoding': 'identity', // không nén để progress chính xác
-  };
-
-  void _setupDio() {
-    _dio = Dio(BaseOptions(
-      connectTimeout: const Duration(seconds: 30),
-      receiveTimeout: const Duration(minutes: 30),
-      followRedirects: true,
-      maxRedirects: 5,
-      // Không throw với 4xx/5xx → tự xử lý bên dưới
-      validateStatus: (status) => status != null && status < 500,
-    ));
-  }
 
   // ─── Extract Video ID ─────────────────────────────────────────────────────
   String? extractVideoId(String url) {
@@ -78,7 +51,6 @@ class DownloadService {
         videoStreams.add(VideoStream(
           quality: s.qualityLabel,
           container: s.container.name,
-          url: s.url.toString(),
           fileSize: s.size.totalBytes.toInt(),
           itag: s.tag,
           isMuxed: true,
@@ -89,7 +61,6 @@ class DownloadService {
         videoStreams.add(VideoStream(
           quality: '${s.qualityLabel} (video only)',
           container: s.container.name,
-          url: s.url.toString(),
           fileSize: s.size.totalBytes.toInt(),
           itag: s.tag,
           isMuxed: false,
@@ -102,7 +73,6 @@ class DownloadService {
           quality: s.audioCodec,
           container: s.container.name,
           bitrate: s.bitrate.kiloBitsPerSecond.toInt(),
-          url: s.url.toString(),
           fileSize: s.size.totalBytes.toInt(),
           itag: s.tag,
         ));
@@ -126,95 +96,44 @@ class DownloadService {
     } on VideoRequiresPurchaseException {
       throw Exception('Video yêu cầu mua trả phí, không thể tải.');
     } catch (e) {
-      final msg = e.toString();
-      if (msg.contains('403') || msg.contains('forbidden')) {
-        throw Exception('YouTube từ chối truy cập. Thử lại sau vài giây.');
-      }
-      throw Exception('Không thể lấy thông tin video: $msg');
+      throw Exception('Không thể lấy thông tin video: ${e.toString()}');
     }
   }
 
-  // ─── FIX CHÍNH: Re-fetch URL mới ngay trước khi download ─────────────────
-  // Không dùng URL cũ từ fetchVideoInfo vì URL stream có expire token
-  // → gọi getManifest() lại để lấy URL còn sống
-  Future<String> _getFreshVideoUrl(String videoId, int itag) async {
-    final manifest = await _yt.videos.streamsClient.getManifest(videoId);
-
-    for (final s in manifest.muxed) {
-      if (s.tag == itag) return s.url.toString();
-    }
-    for (final s in manifest.videoOnly) {
-      if (s.tag == itag) return s.url.toString();
-    }
-
-    // Fallback: chất lượng muxed cao nhất
-    if (manifest.muxed.isNotEmpty) {
-      return manifest.muxed.last.url.toString();
-    }
-    throw Exception('Không tìm thấy stream video. Thử chọn chất lượng khác.');
-  }
-
-  Future<String> _getFreshAudioUrl(String videoId, int itag) async {
-    final manifest = await _yt.videos.streamsClient.getManifest(videoId);
-
-    for (final s in manifest.audioOnly) {
-      if (s.tag == itag) return s.url.toString();
-    }
-
-    // Fallback: bitrate cao nhất
-    if (manifest.audioOnly.isNotEmpty) {
-      final sorted = manifest.audioOnly.toList()
-        ..sort((a, b) =>
-            b.bitrate.kiloBitsPerSecond.compareTo(a.bitrate.kiloBitsPerSecond));
-      return sorted.first.url.toString();
-    }
-    throw Exception('Không tìm thấy stream audio. Thử lại.');
-  }
-
-  // ─── Download helper dùng chung ───────────────────────────────────────────
-  Future<void> _downloadWithDio({
-    required String url,
+  // ─── Core download dùng youtube_explode stream client ────────────────────
+  // KHÔNG dùng Dio/HTTP trực tiếp — youtube_explode tự handle auth, cookie,
+  // signature → bypass hoàn toàn lỗi 403
+  Future<void> _downloadStream({
+    required StreamInfo streamInfo,
     required String savePath,
+    required int totalBytes,
     required Function(double) onProgress,
     required DownloadTask task,
   }) async {
-    try {
-      final response = await _dio.download(
-        url,
-        savePath,
-        onReceiveProgress: (received, total) {
-          if (total > 0) {
-            final p = received / total;
-            onProgress(p);
-            task.progress = p;
-            _notifyHistoryUpdate();
-          }
-        },
-        options: Options(
-          headers: _ytHeaders,
-          responseType: ResponseType.bytes,
-          followRedirects: true,
-          receiveTimeout: const Duration(minutes: 30),
-        ),
-        deleteOnError: true,
-      );
+    final file = File(savePath);
+    final output = file.openWrite();
 
-      // Kiểm tra status thủ công vì validateStatus cho qua 4xx
-      final status = response.statusCode ?? 0;
-      if (status == 403) {
-        throw Exception('URL stream hết hạn (403). Vui lòng thử lại.');
+    try {
+      final stream = _yt.videos.streamsClient.get(streamInfo);
+      int received = 0;
+
+      await for (final chunk in stream) {
+        output.add(chunk);
+        received += chunk.length;
+        if (totalBytes > 0) {
+          final p = received / totalBytes;
+          onProgress(p);
+          task.progress = p;
+          _notifyHistoryUpdate();
+        }
       }
-      if (status >= 400 && status < 500) {
-        throw Exception('Lỗi HTTP $status. Thử chọn chất lượng khác.');
-      }
-    } on DioException catch (e) {
-      if (e.type == DioExceptionType.connectionTimeout) {
-        throw Exception('Timeout kết nối. Kiểm tra mạng và thử lại.');
-      }
-      if (e.type == DioExceptionType.receiveTimeout) {
-        throw Exception('Tải quá lâu do mạng yếu. Thử lại.');
-      }
-      throw Exception('Lỗi tải: ${e.message}');
+
+      await output.flush();
+      await output.close();
+    } catch (e) {
+      await output.close();
+      if (await file.exists()) await file.delete();
+      rethrow;
     }
   }
 
@@ -241,12 +160,37 @@ class DownloadService {
     _notifyHistoryUpdate();
 
     try {
-      // FIX: Re-fetch URL mới ngay lúc này, không dùng stream.url cũ
-      final freshUrl = await _getFreshVideoUrl(videoInfo.id, stream.itag);
+      // Re-fetch manifest để lấy StreamInfo object mới (không dùng URL string)
+      final manifest = await _yt.videos.streamsClient.getManifest(videoInfo.id);
 
-      await _downloadWithDio(
-        url: freshUrl,
+      StreamInfo? streamInfo;
+
+      if (stream.isMuxed) {
+        for (final s in manifest.muxed) {
+          if (s.tag == stream.itag) { streamInfo = s; break; }
+        }
+        // Fallback: muxed chất lượng cao nhất
+        if (streamInfo == null && manifest.muxed.isNotEmpty) {
+          streamInfo = manifest.muxed.last;
+        }
+      } else {
+        for (final s in manifest.videoOnly) {
+          if (s.tag == stream.itag) { streamInfo = s; break; }
+        }
+        // Fallback: video-only đầu tiên
+        if (streamInfo == null && manifest.videoOnly.isNotEmpty) {
+          streamInfo = manifest.videoOnly.first;
+        }
+      }
+
+      if (streamInfo == null) {
+        throw Exception('Không tìm thấy stream. Vui lòng thử chất lượng khác.');
+      }
+
+      await _downloadStream(
+        streamInfo: streamInfo,
         savePath: filePath,
+        totalBytes: streamInfo.size.totalBytes.toInt(),
         onProgress: onProgress,
         task: task,
       );
@@ -263,7 +207,7 @@ class DownloadService {
 
       final file = File(filePath);
       if (await file.exists()) await file.delete();
-      rethrow;
+      throw Exception('Lỗi tải video: ${e.toString().replaceAll('Exception: ', '')}');
     }
   }
 
@@ -289,12 +233,31 @@ class DownloadService {
     _notifyHistoryUpdate();
 
     try {
-      // FIX: Re-fetch URL mới ngay lúc này
-      final freshUrl = await _getFreshAudioUrl(videoInfo.id, stream.itag);
+      // Re-fetch manifest để lấy StreamInfo object mới
+      final manifest = await _yt.videos.streamsClient.getManifest(videoInfo.id);
 
-      await _downloadWithDio(
-        url: freshUrl,
+      AudioOnlyStreamInfo? streamInfo;
+
+      for (final s in manifest.audioOnly) {
+        if (s.tag == stream.itag) { streamInfo = s; break; }
+      }
+
+      // Fallback: bitrate cao nhất
+      if (streamInfo == null && manifest.audioOnly.isNotEmpty) {
+        final sorted = manifest.audioOnly.toList()
+          ..sort((a, b) =>
+              b.bitrate.kiloBitsPerSecond.compareTo(a.bitrate.kiloBitsPerSecond));
+        streamInfo = sorted.first;
+      }
+
+      if (streamInfo == null) {
+        throw Exception('Không tìm thấy stream audio. Vui lòng thử lại.');
+      }
+
+      await _downloadStream(
+        streamInfo: streamInfo,
         savePath: filePath,
+        totalBytes: streamInfo.size.totalBytes.toInt(),
         onProgress: onProgress,
         task: task,
       );
@@ -311,7 +274,7 @@ class DownloadService {
 
       final file = File(filePath);
       if (await file.exists()) await file.delete();
-      rethrow;
+      throw Exception('Lỗi tải audio: ${e.toString().replaceAll('Exception: ', '')}');
     }
   }
 
@@ -330,7 +293,6 @@ class DownloadService {
       }
       return downloadDir;
     } else {
-      // Android: request permission nếu cần
       final status = await Permission.storage.request();
       if (!status.isGranted && !status.isLimited) {
         throw Exception('Cần cấp quyền truy cập bộ nhớ để tải file.');
