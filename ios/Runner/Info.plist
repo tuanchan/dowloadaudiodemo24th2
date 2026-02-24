@@ -87,7 +87,10 @@
 			</array>
 		</dict>
 	</array>
-
+	<key>UIFileSharingEnabled</key>
+<true/>
+<key>LSSupportsOpeningDocumentsInPlace</key>
+<true/>
 	<!-- Background fetch for downloads -->
 	<key>UIBackgroundModes</key>
 	<array>

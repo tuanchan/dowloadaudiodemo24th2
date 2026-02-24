@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:open_file/open_file.dart';
+import 'package:share_plus/share_plus.dart';
+
 import '../models/download_model.dart';
 import '../services/download_service.dart';
 import '../widgets/video_info_card.dart';
@@ -37,6 +40,7 @@ class _HomeScreenState extends State<HomeScreen>
   void dispose() {
     _urlController.dispose();
     _tabController.dispose();
+    _service.dispose(); // ✅ FIX: tránh leak stream/youtube client
     super.dispose();
   }
 
@@ -47,6 +51,7 @@ class _HomeScreenState extends State<HomeScreen>
       _urlController.selection = TextSelection.fromPosition(
         TextPosition(offset: _urlController.text.length),
       );
+      setState(() {}); // để suffixIcon update
     }
   }
 
@@ -91,7 +96,7 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     if (stream != null) {
-      _startVideoDownload(stream as VideoStream);
+      _startVideoDownload(stream);
     }
   }
 
@@ -107,11 +112,13 @@ class _HomeScreenState extends State<HomeScreen>
       ),
     );
     if (stream != null) {
-      _startAudioDownload(stream as AudioStream);
+      _startAudioDownload(stream);
     }
   }
 
   Future<void> _startVideoDownload(VideoStream stream) async {
+    final sourceUrl = _urlController.text.trim();
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
@@ -123,6 +130,7 @@ class _HomeScreenState extends State<HomeScreen>
       final path = await _service.downloadVideo(
         videoInfo: _videoInfo!,
         stream: stream,
+        sourceUrl: sourceUrl,
         onProgress: (p) => setState(() => _downloadProgress = p),
       );
 
@@ -142,6 +150,8 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   Future<void> _startAudioDownload(AudioStream stream) async {
+    final sourceUrl = _urlController.text.trim();
+
     setState(() {
       _isDownloading = true;
       _downloadProgress = 0.0;
@@ -153,6 +163,7 @@ class _HomeScreenState extends State<HomeScreen>
       final path = await _service.downloadAudio(
         videoInfo: _videoInfo!,
         stream: stream,
+        sourceUrl: sourceUrl,
         onProgress: (p) => setState(() => _downloadProgress = p),
       );
 
@@ -173,6 +184,7 @@ class _HomeScreenState extends State<HomeScreen>
 
   void _showDownloadSuccessDialog(String path, DownloadType type) {
     final label = type == DownloadType.audio ? 'Audio' : 'Video';
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -189,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen>
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('File đã được lưu tại:', style: TextStyle(color: Color(0xFF999999))),
+            const Text('File đã lưu tại:', style: TextStyle(color: Color(0xFF999999))),
             const SizedBox(height: 8),
             Container(
               padding: const EdgeInsets.all(10),
@@ -202,9 +214,28 @@ class _HomeScreenState extends State<HomeScreen>
                 style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
               ),
             ),
+            const SizedBox(height: 10),
+            const Text(
+              'iOS: vào Tệp > Trên iPhone của tôi > YT Downloader > Downloads\n'
+              '(cần bật UIFileSharingEnabled trong Info.plist).',
+              style: TextStyle(color: Color(0xFF777777), fontSize: 12, height: 1.3),
+            ),
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () async {
+              // ✅ Lưu vào Tệp (Share sheet -> Save to Files)
+              await Share.shareXFiles([XFile(path)], text: 'YT Downloader');
+            },
+            child: const Text('Lưu vào Tệp'),
+          ),
+          TextButton(
+            onPressed: () async {
+              await OpenFile.open(path);
+            },
+            child: const Text('Mở file'),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Đóng'),
@@ -281,11 +312,9 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // URL Input Card
           _buildUrlInputCard(),
           const SizedBox(height: 16),
 
-          // Progress indicator while downloading
           if (_isDownloading) ...[
             DownloadProgressCard(
               progress: _downloadProgress,
@@ -295,7 +324,6 @@ class _HomeScreenState extends State<HomeScreen>
             const SizedBox(height: 16),
           ],
 
-          // Fetching indicator
           if (_isFetching)
             const Center(
               child: Column(
@@ -309,14 +337,12 @@ class _HomeScreenState extends State<HomeScreen>
               ),
             ),
 
-          // Video info + download buttons
           if (_videoInfo != null && !_isFetching) ...[
             VideoInfoCard(videoInfo: _videoInfo!),
             const SizedBox(height: 16),
             _buildDownloadButtons(),
           ],
 
-          // Empty state
           if (_videoInfo == null && !_isFetching && !_isDownloading) ...[
             const SizedBox(height: 32),
             _buildEmptyState(),
@@ -366,7 +392,6 @@ class _HomeScreenState extends State<HomeScreen>
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Paste button
                 IconButton(
                   onPressed: _pasteFromClipboard,
                   icon: const Icon(Icons.content_paste),
@@ -400,7 +425,7 @@ class _HomeScreenState extends State<HomeScreen>
           child: _DownloadButton(
             icon: Icons.music_note,
             label: 'Tải Audio',
-            sublabel: 'MP3 / WebM',
+            sublabel: 'WebM (gốc)',
             color: const Color(0xFF1DB954),
             onPressed: _isDownloading ? null : _showAudioStreamSelector,
           ),
@@ -474,10 +499,7 @@ class _DownloadButton extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                color.withOpacity(0.8),
-                color.withOpacity(0.5),
-              ],
+              colors: [color.withOpacity(0.8), color.withOpacity(0.5)],
             ),
             borderRadius: BorderRadius.circular(16),
           ),

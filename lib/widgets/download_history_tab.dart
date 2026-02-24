@@ -1,7 +1,9 @@
 import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:open_file/open_file.dart';
 import 'package:share_plus/share_plus.dart';
+
 import '../models/download_model.dart';
 import '../services/download_service.dart';
 
@@ -60,6 +62,8 @@ class _DownloadTaskCard extends StatelessWidget {
         return Colors.red;
       case DownloadStatus.downloading:
         return const Color(0xFF2196F3);
+      case DownloadStatus.fetching:
+        return const Color(0xFFFFC107);
       default:
         return const Color(0xFF666666);
     }
@@ -80,8 +84,8 @@ class _DownloadTaskCard extends StatelessWidget {
     }
   }
 
-  Future<void> _openFile(BuildContext context) async {
-    if (task.filePath == null) return;
+  Future<File?> _ensureFile(BuildContext context) async {
+    if (task.filePath == null) return null;
     final file = File(task.filePath!);
     if (!await file.exists()) {
       if (context.mounted) {
@@ -89,14 +93,23 @@ class _DownloadTaskCard extends StatelessWidget {
           const SnackBar(content: Text('File không còn tồn tại')),
         );
       }
-      return;
+      return null;
     }
-    await OpenFile.open(task.filePath!);
+    return file;
   }
 
-  Future<void> _shareFile(BuildContext context) async {
-    if (task.filePath == null) return;
-    await Share.shareXFiles([XFile(task.filePath!)], text: task.title);
+  Future<void> _openFile(BuildContext context) async {
+    final file = await _ensureFile(context);
+    if (file == null) return;
+    await OpenFile.open(file.path);
+  }
+
+  Future<void> _shareToFiles(BuildContext context) async {
+    final file = await _ensureFile(context);
+    if (file == null) return;
+
+    // iOS: user chọn "Save to Files" trong share sheet
+    await Share.shareXFiles([XFile(file.path)], text: task.title);
   }
 
   @override
@@ -167,7 +180,6 @@ class _DownloadTaskCard extends StatelessWidget {
               ],
             ),
 
-            // Progress bar for in-progress downloads
             if (task.status == DownloadStatus.downloading) ...[
               const SizedBox(height: 10),
               ClipRRect(
@@ -181,18 +193,16 @@ class _DownloadTaskCard extends StatelessWidget {
               ),
             ],
 
-            // Error message
             if (task.status == DownloadStatus.error && task.errorMessage != null) ...[
               const SizedBox(height: 8),
               Text(
                 task.errorMessage!,
                 style: const TextStyle(color: Colors.red, fontSize: 11),
-                maxLines: 2,
+                maxLines: 3,
                 overflow: TextOverflow.ellipsis,
               ),
             ],
 
-            // Actions for completed
             if (task.status == DownloadStatus.completed) ...[
               const SizedBox(height: 10),
               Row(
@@ -207,9 +217,9 @@ class _DownloadTaskCard extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(
                     child: _ActionButton(
-                      icon: Icons.share,
-                      label: 'Chia sẻ',
-                      onTap: () => _shareFile(context),
+                      icon: Icons.save_alt,
+                      label: 'Lưu vào Tệp',
+                      onTap: () => _shareToFiles(context),
                     ),
                   ),
                 ],
@@ -248,7 +258,7 @@ class _ActionButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(icon, size: 14, color: const Color(0xFFCCCCCC)),
-            const SizedBox(width: 4),
+            const SizedBox(width: 6),
             Text(
               label,
               style: const TextStyle(color: Color(0xFFCCCCCC), fontSize: 12),
