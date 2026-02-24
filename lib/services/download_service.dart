@@ -192,7 +192,7 @@ class DownloadService {
     final ext = stream.container ?? 'mp4';
     final qualityTag = stream.quality.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
     final suffix = DateTime.now().millisecondsSinceEpoch.toString();
-    final filePath = '${dir.path}/${safeName}_$qualityTag_$suffix.$ext';
+final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
 
     final task = DownloadTask(
       id: suffix,
