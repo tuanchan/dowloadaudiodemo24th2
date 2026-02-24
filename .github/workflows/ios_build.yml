@@ -16,7 +16,7 @@ on:
 
 env:
   FLUTTER_VERSION: '3.19.0'
-  XCODE_VERSION: '15.2'
+  XCODE_VERSION: '15.2'   # sẽ được setup-xcode chọn đúng
 
 jobs:
   build-ios:
@@ -24,47 +24,53 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      # ─── Checkout ───────────────────────────────────────────────
       - name: 📥 Checkout Repository
         uses: actions/checkout@v4
 
-      # ─── Setup Flutter ──────────────────────────────────────────
+      # --- Setup Xcode (FIX CHÍNH) ---
+      - name: 🛠️ Setup Xcode ${{ env.XCODE_VERSION }}
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: ${{ env.XCODE_VERSION }}
+
+      - name: ✅ Xcode version
+        run: |
+          xcode-select -p
+          xcodebuild -version
+
+      # --- Setup Flutter ---
       - name: 🐦 Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: 'stable'
+          channel: stable
           cache: true
 
-      # ─── Setup Xcode ────────────────────────────────────────────
-      - name: 🛠️ Select Xcode Version
-        run: |
-          sudo xcode-select -switch /Applications/Xcode_${{ env.XCODE_VERSION }}.app/Contents/Developer
-          xcodebuild -version
-
-      # ─── Cache CocoaPods ────────────────────────────────────────
+      # --- Cache CocoaPods ---
       - name: 📦 Cache CocoaPods
         uses: actions/cache@v4
         with:
           path: ios/Pods
-          key: ${{ runner.os }}-pods-${{ hashFiles('**/Podfile.lock') }}
+          key: ${{ runner.os }}-pods-${{ hashFiles('ios/Podfile.lock') }}
           restore-keys: |
             ${{ runner.os }}-pods-
 
-      # ─── Flutter Dependencies ───────────────────────────────────
+      # --- Flutter deps ---
       - name: 📦 Install Flutter Dependencies
         run: |
           flutter --version
           flutter pub get
 
-      # ─── iOS Dependencies ───────────────────────────────────────
+      # --- iOS Pods ---
       - name: 📦 Install iOS Dependencies (CocoaPods)
         working-directory: ios
         run: |
-          pod install --repo-update
+          pod repo update
+          pod install
 
-      # ─── Increment Build Number ─────────────────────────────────
+      # --- Build number ---
       - name: 🔢 Set Build Number
+        shell: bash
         run: |
           BUILD_NUM="${{ github.event.inputs.build_number }}"
           if [ -z "$BUILD_NUM" ]; then
@@ -73,33 +79,37 @@ jobs:
           echo "BUILD_NUMBER=$BUILD_NUM" >> $GITHUB_ENV
           echo "Using build number: $BUILD_NUM"
 
-      # ─── Build iOS (No Code Sign) ───────────────────────────────
+      # --- Build iOS no codesign ---
       - name: 🏗️ Build iOS App (No Code Signing)
+        shell: bash
         run: |
           flutter build ios \
             --release \
             --no-codesign \
-            --build-number=${{ env.BUILD_NUMBER }}
+            --build-number="${BUILD_NUMBER}"
 
-      # ─── Create Payload & IPA ───────────────────────────────────
+      # --- Package IPA ---
       - name: 📦 Package as IPA
+        shell: bash
         run: |
-          # Create directory structure
+          rm -rf Payload YTDownloader.ipa
           mkdir -p Payload
-          
-          # Copy .app bundle
-          APP_PATH=$(find build/ios/iphoneos -name "*.app" | head -1)
+
+          APP_PATH="$(find build/ios/iphoneos -maxdepth 2 -name '*.app' | head -n 1)"
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ Cannot find .app in build/ios/iphoneos"
+            find build/ios -maxdepth 4 -type d -print
+            exit 1
+          fi
+
           echo "Found app at: $APP_PATH"
-          cp -r "$APP_PATH" Payload/
-          
-          # Create IPA (IPA = zip with Payload folder)
-          zip -r YTDownloader.ipa Payload/
-          
-          # Verify
+          cp -R "$APP_PATH" Payload/
+
+          /usr/bin/zip -r YTDownloader.ipa Payload >/dev/null
           ls -lh YTDownloader.ipa
           echo "✅ IPA created successfully!"
 
-      # ─── Upload IPA Artifact ────────────────────────────────────
+      # --- Upload artifact ---
       - name: ☁️ Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
@@ -108,7 +118,7 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
-      # ─── Create Release (on tag) ────────────────────────────────
+      # --- Release on tag ---
       - name: 🚀 Create GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v1
@@ -117,31 +127,24 @@ jobs:
           name: YT Downloader ${{ github.ref_name }}
           body: |
             ## 📱 YT Downloader ${{ github.ref_name }}
-            
-            ### Cài đặt (Sideload - không cần jailbreak):
-            
+
+            ### Cài đặt (Sideload - không cần jailbreak)
+
             #### 🔧 Dùng Sideloadly:
-            1. Tải [Sideloadly](https://sideloadly.io/) về máy tính
+            1. Tải Sideloadly về máy tính
             2. Kết nối iPhone/iPad qua USB
             3. Kéo file `YTDownloader.ipa` vào Sideloadly
             4. Nhập Apple ID (dùng tài khoản phụ)
             5. Nhấn **Start** và chờ cài đặt
             6. Vào **Settings > General > VPN & Device Management** và **Trust** developer
-            
-            #### 📲 Dùng eSign (không cần máy tính):
-            1. Cài eSign từ: `esign.yyyue.xyz`
-            2. Tải file IPA về trong eSign
-            3. Import certificate vào eSign
-            4. Ký và cài đặt
-            
-            > ⚠️ App có hiệu lực **7 ngày** với tài khoản Apple ID miễn phí.
-            > Dùng Apple Developer Account ($99/năm) để có hiệu lực **1 năm**.
+
+            > ⚠️ App có hiệu lực **7 ngày** với Apple ID miễn phí.
+            > Dùng Apple Developer Account để có hiệu lực lâu hơn.
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # ─── Build Summary ───────────────────────────────────────────────
   notify:
     name: 📊 Build Summary
     needs: build-ios
@@ -150,7 +153,7 @@ jobs:
     steps:
       - name: Print Summary
         run: |
-          if [ "${{ needs.build-ios.result }}" == "success" ]; then
+          if [ "${{ needs.build-ios.result }}" = "success" ]; then
             echo "✅ iOS build SUCCEEDED!"
             echo "📦 IPA artifact available for download in GitHub Actions"
           else
