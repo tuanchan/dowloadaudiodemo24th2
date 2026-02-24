@@ -49,6 +49,7 @@ class DownloadService {
       final manifest = await _yt.videos.streamsClient.getManifest(videoId);
 
       final videoStreams = <VideoStream>[];
+
       for (final s in manifest.muxed) {
         videoStreams.add(VideoStream(
           quality: s.qualityLabel,
@@ -58,6 +59,7 @@ class DownloadService {
           isMuxed: true,
         ));
       }
+
       for (final s in manifest.videoOnly) {
         videoStreams.add(VideoStream(
           quality: '${s.qualityLabel} (video only)',
@@ -79,6 +81,7 @@ class DownloadService {
         ));
       }
 
+      // Sort streams: video theo độ phân giải, audio theo bitrate
       videoStreams.sort((a, b) =>
           _extractQualityNumber(b.quality).compareTo(_extractQualityNumber(a.quality)));
       audioStreams.sort((a, b) => (b.bitrate ?? 0).compareTo(a.bitrate ?? 0));
@@ -116,7 +119,6 @@ class DownloadService {
     int lastUiMs = 0;
     int lastReceivedForFake = 0;
     DateTime lastDataAt = DateTime.now();
-
     Timer? watchdog;
 
     try {
@@ -152,7 +154,7 @@ class DownloadService {
             onProgress(p);
             task.progress = p;
           } else {
-            // totalBytes không có => fake progress nhẹ để UI không đứng 0%
+            // totalBytes không có => fake progress nhẹ để UI không đứng
             final delta = received - lastReceivedForFake;
             lastReceivedForFake = received;
             if (delta > 0) {
@@ -184,7 +186,7 @@ class DownloadService {
     required VideoInfo videoInfo,
     required VideoStream stream,
     required Function(double progress) onProgress,
-    required String sourceUrl, // URL gốc
+    required String sourceUrl,
   }) async {
     final dir = await _getDownloadDirectory();
 
@@ -192,15 +194,16 @@ class DownloadService {
     final ext = stream.container ?? 'mp4';
     final qualityTag = stream.quality.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
     final suffix = DateTime.now().millisecondsSinceEpoch.toString();
-final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
+    final filePath = '${dir.path}/${safeName}_${qualityTag}_$suffix.$ext';
 
     final task = DownloadTask(
       id: suffix,
       title: videoInfo.title,
-      url: sourceUrl, // FIX: lưu URL thật
+      url: sourceUrl,
       type: DownloadType.video,
       quality: stream.quality,
     );
+
     _downloadHistory.insert(0, task);
     _notifyHistoryUpdate();
 
@@ -208,24 +211,43 @@ final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
       final manifest = await _yt.videos.streamsClient.getManifest(videoInfo.id);
 
       StreamInfo? streamInfo;
+
       if (stream.isMuxed) {
-        streamInfo = manifest.muxed.firstWhere(
-          (s) => s.tag == stream.itag,
-          orElse: () {
-            final list = manifest.muxed.toList()
-              ..sort((a, b) => a.videoQuality.compareTo(b.videoQuality));
-            return list.isNotEmpty ? list.last : throw Exception('No muxed stream');
-          },
-        );
+        // try exact match
+        for (final s in manifest.muxed) {
+          if (s.tag == stream.itag) {
+            streamInfo = s;
+            break;
+          }
+        }
+
+        // fallback: muxed highest qualityLabel number
+        if (streamInfo == null && manifest.muxed.isNotEmpty) {
+          final list = manifest.muxed.toList()
+            ..sort((a, b) => _extractQualityNumber(a.qualityLabel)
+                .compareTo(_extractQualityNumber(b.qualityLabel)));
+          streamInfo = list.last;
+        }
       } else {
-        streamInfo = manifest.videoOnly.firstWhere(
-          (s) => s.tag == stream.itag,
-          orElse: () {
-            final list = manifest.videoOnly.toList()
-              ..sort((a, b) => a.videoQuality.compareTo(b.videoQuality));
-            return list.isNotEmpty ? list.last : throw Exception('No video-only stream');
-          },
-        );
+        // try exact match
+        for (final s in manifest.videoOnly) {
+          if (s.tag == stream.itag) {
+            streamInfo = s;
+            break;
+          }
+        }
+
+        // fallback: videoOnly highest qualityLabel number
+        if (streamInfo == null && manifest.videoOnly.isNotEmpty) {
+          final list = manifest.videoOnly.toList()
+            ..sort((a, b) => _extractQualityNumber(a.qualityLabel)
+                .compareTo(_extractQualityNumber(b.qualityLabel)));
+          streamInfo = list.last;
+        }
+      }
+
+      if (streamInfo == null) {
+        throw Exception('Không tìm thấy stream. Vui lòng thử chất lượng khác.');
       }
 
       await _downloadStream(
@@ -259,22 +281,23 @@ final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
     required VideoInfo videoInfo,
     required AudioStream stream,
     required Function(double progress) onProgress,
-    required String sourceUrl, // URL gốc
+    required String sourceUrl,
   }) async {
     final dir = await _getDownloadDirectory();
 
     final safeName = _sanitizeFilename(videoInfo.title);
     final ext = stream.container ?? 'webm';
     final suffix = DateTime.now().millisecondsSinceEpoch.toString();
-    final filePath = '${dir.path}/${safeName}_audio_${suffix}.$ext';
+    final filePath = '${dir.path}/${safeName}_audio_$suffix.$ext';
 
     final task = DownloadTask(
       id: suffix,
       title: videoInfo.title,
-      url: sourceUrl, // FIX: URL thật
+      url: sourceUrl,
       type: DownloadType.audio,
       quality: '${stream.bitrate ?? 0}kbps',
     );
+
     _downloadHistory.insert(0, task);
     _notifyHistoryUpdate();
 
@@ -282,14 +305,25 @@ final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
       final manifest = await _yt.videos.streamsClient.getManifest(videoInfo.id);
 
       AudioOnlyStreamInfo? streamInfo;
-      streamInfo = manifest.audioOnly.firstWhere(
-        (s) => s.tag == stream.itag,
-        orElse: () {
-          final sorted = manifest.audioOnly.toList()
-            ..sort((a, b) => b.bitrate.kiloBitsPerSecond.compareTo(a.bitrate.kiloBitsPerSecond));
-          return sorted.isNotEmpty ? sorted.first : throw Exception('No audio stream');
-        },
-      );
+
+      for (final s in manifest.audioOnly) {
+        if (s.tag == stream.itag) {
+          streamInfo = s;
+          break;
+        }
+      }
+
+      // fallback: bitrate cao nhất
+      if (streamInfo == null && manifest.audioOnly.isNotEmpty) {
+        final sorted = manifest.audioOnly.toList()
+          ..sort((a, b) =>
+              b.bitrate.kiloBitsPerSecond.compareTo(a.bitrate.kiloBitsPerSecond));
+        streamInfo = sorted.first;
+      }
+
+      if (streamInfo == null) {
+        throw Exception('Không tìm thấy stream audio. Vui lòng thử lại.');
+      }
 
       await _downloadStream(
         streamInfo: streamInfo,
@@ -325,7 +359,7 @@ final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
 
   Future<Directory> _getDownloadDirectory() async {
     if (Platform.isIOS) {
-      // ✅ iOS: Documents/Downloads (sẽ hiện trong Files nếu bật UIFileSharingEnabled)
+      // iOS: Documents/Downloads (sẽ hiện trong Files nếu bật UIFileSharingEnabled)
       final dir = await getApplicationDocumentsDirectory();
       final downloadDir = Directory('${dir.path}/Downloads');
       if (!await downloadDir.exists()) {
@@ -333,23 +367,17 @@ final filePath = '${dir.path}/${safeName}_$qualityTag.$ext';
       }
       return downloadDir;
     } else {
-      // ✅ Android: app-specific external (chắc chạy trên Android 10-14)
-      // Nếu anh muốn lưu đúng "Download" hệ thống => phải làm SAF/MediaStore (phức tạp hơn)
+      // Android: app-specific external (chắc chạy Android 10-14)
       final extDir = await getExternalStorageDirectory();
       if (extDir == null) {
-        // fallback internal
         final dir = await getApplicationDocumentsDirectory();
         final d = Directory('${dir.path}/Downloads');
         if (!await d.exists()) await d.create(recursive: true);
         return d;
       }
 
-      // xin quyền cho Android cũ (<= 12) nếu cần
-      final status = await Permission.storage.request();
-      if (!status.isGranted && !status.isLimited) {
-        // vẫn cho chạy nếu app-specific, nhưng để minh bạch thì báo
-        // (tuỳ máy vẫn ok)
-      }
+      // xin quyền cho Android cũ (không bắt buộc cho app-specific trên nhiều máy)
+      await Permission.storage.request();
 
       final d = Directory('${extDir.path}/YTDownloader');
       if (!await d.exists()) await d.create(recursive: true);
